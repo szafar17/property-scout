@@ -11,7 +11,7 @@ map and ranked views.
 This replaced an earlier email-parsing MVP with a proper API ingest.
 
 > **Status.** The pipeline runs end to end offline on bundled, fictional sample
-> listings (`--sources mock`), and the 91-test suite runs in CI on pull requests and pushes to main.
+> listings (`--sources mock`), and the 100-test suite runs in CI on pull requests and pushes to main.
 > Both MLS adapters are tested against mocked feed responses. Connecting them to a
 > live feed requires an MLS data license and credentials (see
 > [`docs/NJMLS_feed_request_email.md`](docs/NJMLS_feed_request_email.md)).
@@ -52,6 +52,9 @@ This replaced an earlier email-parsing MVP with a proper API ingest.
                           ▼
         run.py  ── orchestrate, structured logs, 10-minute budget check,
                    append Run Log, write healthcheck.json
+
+        mcp_server.py  ── read-only MCP tools over the scored export:
+                          search, explain a score, try new weights
 ```
 
 The Notion DB feeds a map view (via `Latitude`/`Longitude`) and ranked board
@@ -297,6 +300,48 @@ property-scout-export --out docs/listings.json   # read-only; skips without a to
 
 ---
 
+## MCP server (for AI agents)
+
+`property-scout-mcp` exposes the scored listings to an AI agent (Claude Desktop,
+Claude Code, or any MCP client) over stdio. It reads the same flat
+`listings.json` the map uses and recomputes scores with `score.py`, so every
+number it returns can be explained. All four tools are read-only.
+
+| Tool | What it does |
+|---|---|
+| `search_listings` | Ranks listings best first, with filters for town, county, max price, min beds, min score, and fixer-only |
+| `explain_score` | Breaks one listing's score into its six weighted subscores, their inputs, and Claude's read of the remarks |
+| `try_weights` | Re-ranks the pool under new weights (only the ones you change; the rest stay put), shows rank movement, and returns the yaml to paste into the Notion config. Saves nothing |
+| `current_weights` | Shows the weights in use and what each subscore measures |
+
+So an agent can answer "which Hudson listings under $450k have the most fixer
+upside?", "why did this one score 66?", or "what changes if safety counts twice
+as much?" and hand back the config change to make.
+
+```bash
+uv pip install -e ".[mcp]"
+property-scout-mcp --listings docs/listings.json --config-file config.sample.yaml
+```
+
+Point it at the daily export (`property-scout-export --out listings.json`) for
+live data; it reloads the file whenever it changes. Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "property-scout": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/property-scout", "--extra", "mcp",
+               "property-scout-mcp", "--listings", "docs/listings.json"]
+    }
+  }
+}
+```
+
+Claude Code: `claude mcp add property-scout -- uv run --directory /path/to/property-scout --extra mcp property-scout-mcp --listings docs/listings.json`
+
+---
+
 ## Notion database columns
 
 `Address`(title), `Town`, `County`, `MLS`, `MLS Num`, `List Price`, `Beds`,
@@ -317,7 +362,7 @@ deleted.
 ## Tests
 
 ```bash
-make test        # 91 tests, no network or credentials needed
+make test        # 100 tests, no network or credentials needed
 ```
 
 | Area | File(s) |
@@ -330,6 +375,7 @@ make test        # 91 tests, no network or credentials needed
 | Config extraction + validation | `test_config.py` |
 | Off-market sweep + miss-counter transitions | `test_notion_sweep.py` |
 | Map export, run digest, mock end-to-end run, preflight | `test_export_map.py`, `test_run_digest.py`, `test_run_mock.py`, `test_cli.py` |
+| MCP server: search, explain, weight what-ifs, client round trip | `test_mcp_server.py` |
 
 ---
 
