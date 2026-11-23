@@ -1,0 +1,132 @@
+# Daily Property Scout pipeline on GitHub Actions (primary deploy target).
+#
+# DST-robust scheduling: GitHub cron is always UTC and does NOT honor `TZ`, so
+# a fixed UTC time would drift by an hour twice a year. Instead we run the cron
+# every hour and gate the job to the single hour that is 06:00 in
+# America/New_York *on the runner that day*. This fires exactly once per day at
+# 06:00 local through both EDT and EST with zero manual DST maintenance.
+# (Note: GitHub-hosted cron can be delayed by several minutes under load; the
+# 06:00 local target is "early morning", not a hard real-time deadline.)
+name: property-scout-daily
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # hourly (UTC); gated below to 06:00 America/New_York
+  workflow_dispatch: {}   # manual "Run workflow" button -> always runs
+
+# Pages publish needs id-token (OIDC) + pages write; everything else is read.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Avoid overlapping deploys to the github-pages environment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # The deploy step publishes to the github-pages environment and exposes the
+    # live URL on the run summary.
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      TZ: America/New_York
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      NOTION_CONFIG_PAGE_ID: ${{ secrets.NOTION_CONFIG_PAGE_ID }}
+      NOTION_PIPELINE_DATA_SOURCE_ID: ${{ secrets.NOTION_PIPELINE_DATA_SOURCE_ID }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TRESTLE_CLIENT_ID: ${{ secrets.TRESTLE_CLIENT_ID }}
+      TRESTLE_CLIENT_SECRET: ${{ secrets.TRESTLE_CLIENT_SECRET }}
+      TRESTLE_TOKEN_URL: ${{ secrets.TRESTLE_TOKEN_URL }}
+      TRESTLE_BASE_URL: ${{ secrets.TRESTLE_BASE_URL }}
+      NJMLS_READVANTAGE_LOGIN_URL: ${{ secrets.NJMLS_READVANTAGE_LOGIN_URL }}
+      NJMLS_READVANTAGE_USERNAME: ${{ secrets.NJMLS_READVANTAGE_USERNAME }}
+      NJMLS_READVANTAGE_PASSWORD: ${{ secrets.NJMLS_READVANTAGE_PASSWORD }}
+      NJMLS_READVANTAGE_USER_AGENT: ${{ secrets.NJMLS_READVANTAGE_USER_AGENT }}
+      NJMLS_READVANTAGE_USER_AGENT_PASSWORD: ${{ secrets.NJMLS_READVANTAGE_USER_AGENT_PASSWORD }}
+      NJMLS_RESO_BASE_URL: ${{ secrets.NJMLS_RESO_BASE_URL }}
+      NJMLS_RESO_CLIENT_ID: ${{ secrets.NJMLS_RESO_CLIENT_ID }}
+      NJMLS_RESO_CLIENT_SECRET: ${{ secrets.NJMLS_RESO_CLIENT_SECRET }}
+      NJMLS_RESO_TOKEN_URL: ${{ secrets.NJMLS_RESO_TOKEN_URL }}
+      WALKSCORE_KEY: ${{ secrets.WALKSCORE_KEY }}
+      GOOGLE_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_KEY }}
+      # Free api.data.gov key for the FBI Crime Data Explorer (enrich/crime.py).
+      # Optional: absent -> municipal safety scores degrade to neutral.
+      DATA_GOV_KEY: ${{ secrets.DATA_GOV_KEY }}
+    steps:
+      - name: Gate to 06:00 America/New_York
+        id: gate
+        run: |
+          hour=$(TZ=America/New_York date +%H)
+          if [[ -z "$NOTION_TOKEN" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: the NOTION_TOKEN secret is not configured."
+          elif [[ "$hour" == "06" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: local hour is $hour, not 06."
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        if: steps.gate.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install
+        if: steps.gate.outputs.run == 'true'
+        run: uv pip install --system -e .
+
+      - name: Preflight check (no writes)
+        if: steps.gate.outputs.run == 'true'
+        run: property-scout --check
+
+      - name: Run pipeline
+        if: steps.gate.outputs.run == 'true'
+        run: property-scout --sources hcmls,njmls
+
+      - name: Upload healthcheck
+        # Always upload (even on failure) so a failed run still leaves a trace.
+        if: steps.gate.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: healthcheck-${{ github.run_id }}
+          path: healthcheck.json
+          if-no-files-found: warn
+
+      # --- Publish the GitHub Pages map. Opt-in: set the repository variable
+      # PUBLISH_PAGES=true. A Pages site is public, and real listings on a public
+      # page fall under your MLS's IDX display rules. --- #
+      - name: Export listings.json from Notion
+        # Read-only Notion query -> docs/listings.json (the committed seed is
+        # overwritten with fresh data). WARNs + keeps the seed if no token.
+        if: steps.gate.outputs.run == 'true' && vars.PUBLISH_PAGES == 'true'
+        run: property-scout-export --out docs/listings.json
+
+      - name: Configure Pages
+        if: steps.gate.outputs.run == 'true' && vars.PUBLISH_PAGES == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact (./docs)
+        if: steps.gate.outputs.run == 'true' && vars.PUBLISH_PAGES == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        if: steps.gate.outputs.run == 'true' && vars.PUBLISH_PAGES == 'true'
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.propertyscout.daily</string>
+
+    <!-- launchd interprets StartCalendarInterval in the machine's local
+         timezone. Set the machine TZ to America/New_York (or run on an
+         ET host) so 06:00 here means 06:00 Eastern. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TZ</key>
+        <string>America/New_York</string>
+        <!-- Load secrets from the project .env via the wrapper script below. -->
+    </dict>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <!-- __PROJECT_DIR__ is substituted by `make install-schedule`. -->
+        <string>cd __PROJECT_DIR__ &amp;&amp; set -a &amp;&amp; . ./.env &amp;&amp; set +a &amp;&amp; ./.venv/bin/property-scout --sources hcmls,njmls</string>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>__PROJECT_DIR__/logs/property-scout.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_DIR__/logs/property-scout.err.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

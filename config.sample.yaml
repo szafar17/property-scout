@@ -1,0 +1,45 @@
+# Sample of the config block that lives inside the Notion page
+# "Property Scout: Daily Fixer-Upper Pipeline" (NOTION_CONFIG_PAGE_ID).
+# At runtime config.py fetches that page, extracts the ```yaml block, and
+# validates it with pydantic. This file is a local copy for reference and for
+# `property-scout --config-file config.sample.yaml` dry runs.
+
+filters:
+  counties: [Bergen, Passaic, Hudson]
+  min_price: 250000
+  max_price: 750000
+  min_beds: 2
+  property_types: [Single Family, Multi-Family, Townhouse, Condo]
+  max_days_on_market: 120
+  statuses: [Active, New Today, Price Drop]
+
+# Weights MUST sum to 100 (validated).
+weights:
+  price_vs_area_value: 25
+  fixer_upside: 20
+  trend_20y: 15
+  safety: 15
+  location_convenience: 15
+  carry_costs: 10
+
+commute_anchor:
+  label: NYC Port Authority
+  address: "625 8th Ave, New York, NY 10018"
+  mode: transit          # transit | driving | walking | bicycling
+  arrival_local_time: "09:00"
+
+fixer_keywords:
+  - tlc
+  - handyman
+  - as-is
+  - estate sale
+  - investor
+  - needs work
+  - fixer
+  - cash only
+  - bring all offers
+  - sweat equity
+  - value add
+  - diamond in the rough
+
+run_budget_seconds: 600

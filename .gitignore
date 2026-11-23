@@ -1,0 +1,19 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+data/zhvi/*.csv
+data/zhvi/*.parquet
+data/crime/*.json
+healthcheck.json
+logs/
+.DS_Store
+.claude/
+# Note: docs/listings.json IS committed (seed for GitHub Pages before first CI run).

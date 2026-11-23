@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Property Scout — Fixer-Upper Map</title>
+<!--
+  GitHub Pages map. Data is loaded at runtime from ./listings.json (refreshed
+  each morning by `property-scout-export` in CI and committed/published via
+  actions/deploy-pages). A committed seed listings.json lets this render before
+  the first CI run. Leaflet is loaded from the unpkg CDN — fine on GitHub Pages.
+-->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{--bg:#0f1420;--panel:#161d2e;--panel2:#1d2740;--line:#2a3650;--txt:#e7ecf5;--mut:#9fb0cc;--accent:#4f9cff;}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--txt)}
+#app{display:flex;height:100vh;overflow:hidden}
+#sidebar{width:380px;min-width:380px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column}
+#header{padding:14px 16px;border-bottom:1px solid var(--line)}
+#header h1{font-size:16px;margin:0 0 2px}
+#header .sub{color:var(--mut);font-size:11px}
+#header .asof{color:var(--mut);font-size:11px;margin-top:4px}
+.banner{margin:10px 16px 0;padding:7px 10px;background:#3a2d12;border:1px solid #6b5320;border-radius:7px;color:#f3d79a;font-size:11px;display:none}
+.banner.show{display:block}
+.banner.err{background:#3a1212;border-color:#6b2020;color:#f3a59a}
+/* Today digest */
+#digest{margin:10px 16px 0;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+#digest h2{font-size:11px;margin:0 0 7px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+#digest .counts{display:flex;gap:14px;margin-bottom:8px}
+#digest .counts .num{font-size:18px;font-weight:700}
+#digest .counts .lbl{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+#digest .num.drop{color:#ff9db5}
+#digest .num.new{color:#8fd3a0}
+.ditem{padding:6px 0;border-top:1px solid var(--line);cursor:pointer}
+.ditem:hover{opacity:.85}
+.ditem .drow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ditem .daddr{font-size:12px;font-weight:600}
+.ditem .dprice{font-size:12px;font-weight:700;color:#8fd3a0;white-space:nowrap}
+.ditem .dwhy{font-size:10.5px;color:var(--mut);margin-top:2px}
+.dempty{font-size:11px;color:var(--mut)}
+#filters{padding:12px 16px;border-bottom:1px solid var(--line);overflow:auto}
+.frow{margin-bottom:11px}
+.frow label{display:block;font-size:11px;color:var(--mut);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:4px 9px;border:1px solid var(--line);border-radius:20px;font-size:12px;cursor:pointer;background:var(--panel2);color:var(--mut);user-select:none}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+select,input[type=range]{width:100%}
+select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px;font-size:13px}
+.rangeval{font-size:12px;color:var(--txt);float:right}
+#count{padding:9px 16px;font-size:12px;color:var(--mut);border-bottom:1px solid var(--line)}
+#list{overflow:auto;flex:1}
+.card{padding:11px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+.card:hover{background:var(--panel2)}
+.card .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card .addr{font-size:13px;font-weight:600}
+.card .price{font-size:14px;font-weight:700;color:#8fd3a0;white-space:nowrap}
+.card .meta{font-size:11px;color:var(--mut);margin-top:3px}
+.sbadge{display:inline-block;min-width:30px;text-align:center;padding:2px 6px;border-radius:6px;font-size:11px;font-weight:700;color:#0c1020}
+.sigs{margin-top:5px;display:flex;flex-wrap:wrap;gap:4px}
+.sig{font-size:10px;padding:1px 6px;border-radius:10px;background:#3a2230;color:#ff9db5;border:1px solid #5e2f44}
+#map{flex:1}
+.leaflet-popup-content{margin:11px 13px;font-size:12.5px;color:#16203a}
+.pp h3{margin:0 0 4px;font-size:14px}
+.pp .grid{display:grid;grid-template-columns:auto auto;gap:2px 14px;margin-top:6px}
+.pp .k{color:#5a6b8c}.pp b{color:#0c1020}
+.pp a{color:#1f6feb;font-weight:600}
+.legend{position:absolute;z-index:600;right:12px;bottom:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:11px;color:var(--mut)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div id="header">
+      <h1>🏚️ Property Scout — Deal-Flow Map</h1>
+      <div class="sub">Bergen · Passaic · Hudson — ranked fixer-upper candidates</div>
+      <div class="asof" id="asof"></div>
+      <div class="banner" id="banner"></div>
+    </div>
+    <div id="digest">
+      <h2>Today</h2>
+      <div class="counts">
+        <div><div class="num new" id="d-new">–</div><div class="lbl">New today</div></div>
+        <div><div class="num drop" id="d-drop">–</div><div class="lbl">Price drops</div></div>
+      </div>
+      <div id="d-top"><div class="dempty">Loading…</div></div>
+    </div>
+    <div id="filters">
+      <div class="frow"><label>County</label><div class="chips" id="f-county"></div></div>
+      <div class="frow"><label>Status</label><div class="chips" id="f-status"></div></div>
+      <div class="frow"><label>Property type</label><div class="chips" id="f-type"></div></div>
+      <div class="frow"><label>Min score <span class="rangeval" id="v-score">0</span></label><input type="range" id="r-score" min="0" max="100" value="0"></div>
+      <div class="frow"><label>Max price <span class="rangeval" id="v-price">$550k</span></label><input type="range" id="r-price" min="200000" max="550000" step="5000" value="550000"></div>
+      <div class="frow"><label>Min beds <span class="rangeval" id="v-beds">Any</span></label><input type="range" id="r-beds" min="0" max="5" value="0"></div>
+      <div class="frow"><label>Sort by</label><select id="sort">
+        <option value="Score">Score (high→low)</option>
+        <option value="ppsf">$/SqFt (low→high)</option>
+        <option value="List Price">Price (low→high)</option>
+        <option value="DOM">Days on market</option>
+        <option value="20Y Appr Pct">20Y appreciation</option>
+      </select></div>
+    </div>
+    <div id="count"></div>
+    <div id="list"></div>
+  </div>
+  <div id="map"></div>
+  <div class="legend">Pin color = Score &nbsp; <span style="white-space:nowrap"><i style="background:#2ecc71"></i>70+ <i style="background:#9acd32"></i>60 <i style="background:#f1c40f"></i>50 <i style="background:#e67e22"></i>40 <i style="background:#e74c3c"></i>&lt;40</span></div>
+</div>
+<script>
+let DATA = [];
+const map = L.map('map',{zoomControl:true}).setView([40.82,-74.07],11);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'© OpenStreetMap © CARTO',subdomains:'abcd',maxZoom:19}).addTo(map);
+
+function scoreColor(s){return s>=70?'#2ecc71':s>=60?'#9acd32':s>=50?'#f1c40f':s>=40?'#e67e22':'#e74c3c';}
+const fmt=n=>n==null?'—':'$'+Number(n).toLocaleString();
+const state={county:new Set(),status:new Set(),type:new Set(),minScore:0,maxPrice:550000,minBeds:0,sort:'Score'};
+let markers=L.layerGroup().addTo(map);
+
+function banner(msg,isErr){const b=document.getElementById('banner');b.innerHTML=msg;b.className='banner show'+(isErr?' err':'');}
+
+function uniq(k){return [...new Set(DATA.map(d=>d[k]).filter(Boolean))];}
+function chipset(id,key){const el=document.getElementById(id);el.innerHTML='';uniq(key).sort().forEach(v=>{
+  const c=document.createElement('div');c.className='chip';c.textContent=v;
+  c.onclick=()=>{c.classList.toggle('on');c.classList.contains('on')?state[key.toLowerCase()].add(v):state[key.toLowerCase()].delete(v);render();};
+  el.appendChild(c);});}
+
+function bind(rid,vid,key,fmtf){const r=document.getElementById(rid),v=document.getElementById(vid);
+  r.oninput=()=>{state[key]=+r.value;v.textContent=fmtf(+r.value);render();};}
+
+function pass(d){
+  if(state.county.size&&!state.county.has(d.County))return false;
+  if(state.status.size&&!state.status.has(d.Status))return false;
+  if(state.type.size&&!state.type.has(d.Type))return false;
+  if((d.Score||0)<state.minScore)return false;
+  if((d['List Price']||0)>state.maxPrice)return false;
+  if((d.Beds||0)<state.minBeds)return false;
+  return true;}
+
+function popupHTML(d){
+  const sigs=(d['Fixer Signals']||[]).join(', ')||'—';
+  const reno=(d['Reno Items']||[]).join(', ')||'—';
+  return `<div class="pp"><h3>${d.Address}</h3>
+   <span class="sbadge" style="background:${scoreColor(d.Score)}">${d.Score}</span>
+   <b style="margin-left:8px">${fmt(d['List Price'])}</b>
+   <div class="grid">
+   <span class="k">Beds/Baths</span><b>${d.Beds}/${d.Baths}</b>
+   <span class="k">SqFt ($/sf)</span><b>${d.SqFt} (${fmt(d['$ per SqFt'])})</b>
+   <span class="k">Type</span><b>${d.Type}</b>
+   <span class="k">Year built</span><b>${d['Year Built']}</b>
+   <span class="k">Town / County</span><b>${d.Town}, ${d.County}</b>
+   <span class="k">MLS</span><b>${d.MLS} ${d['MLS Num']}</b>
+   <span class="k">Status / DOM</span><b>${d.Status} · ${d.DOM}d</b>
+   <span class="k">Trend grade</span><b>${d['Trend Grade']} (${d['20Y Appr Pct']}% / 20y)</b>
+   <span class="k">Safety / Walk</span><b>${d['Safety 0-10']}/10 · WS ${d['Walk Score']}</b>
+   <span class="k">Commute</span><b>${d['Commute Min']} min</b>
+   <span class="k">HOA / Taxes</span><b>${fmt(d['HOA per Mo'])}/mo · ${fmt(d['Taxes per Yr'])}/yr</b>
+   </div>
+   <div style="margin-top:6px"><span class="k">Fixer:</span> ${sigs}<br><span class="k">Reno:</span> ${reno}
+   ${d.Flags?'<br><span class="k">Flags:</span> '+d.Flags:''}</div>
+   ${d.Link?`<div style="margin-top:7px"><a href="${d.Link}" target="_blank" rel="noopener">Open listing ↗</a></div>`:''}</div>`;}
+
+function render(){
+  let rows=DATA.filter(pass);
+  const s=state.sort;
+  rows.sort((a,b)=> (s==='Score'||s==='20Y Appr Pct')?(b[s]||0)-(a[s]||0):((a[s==='ppsf'?'$ per SqFt':s]||0)-(b[s==='ppsf'?'$ per SqFt':s]||0)));
+  markers.clearLayers();
+  rows.forEach(d=>{
+    if(d.Latitude==null||d.Longitude==null)return;
+    const m=L.circleMarker([d.Latitude,d.Longitude],{radius:9,color:'#0c1020',weight:1.5,fillColor:scoreColor(d.Score),fillOpacity:.95});
+    m.bindPopup(popupHTML(d),{maxWidth:340});
+    m.bindTooltip(`${d.Score} · ${fmt(d['List Price'])}`,{direction:'top'});
+    m._addr=d.Address;markers.addLayer(m);d._m=m;});
+  const list=document.getElementById('list');list.innerHTML='';
+  rows.forEach(d=>{
+    const c=document.createElement('div');c.className='card';
+    c.innerHTML=`<div class="top"><span class="addr">${d.Address.split(',')[0]}, ${d.Town}</span><span class="price">${fmt(d['List Price'])}</span></div>
+      <div class="meta"><span class="sbadge" style="background:${scoreColor(d.Score)}">${d.Score}</span>
+      &nbsp;${d.Beds}bd/${d.Baths}ba · ${d.SqFt}sf · ${d.Type} · ${d.County} · ${d.MLS} · ${d.DOM}d</div>
+      <div class="sigs">${(d['Fixer Signals']||[]).map(x=>`<span class="sig">${x}</span>`).join('')}</div>`;
+    c.onclick=()=>{focusListing(d);};
+    list.appendChild(c);});
+  document.getElementById('count').textContent=`${rows.length} of ${DATA.length} listings`;
+}
+
+function focusListing(d){
+  if(d.Latitude!=null&&d.Longitude!=null){map.setView([d.Latitude,d.Longitude],14);if(d._m)d._m.openPopup();}
+}
+
+// --- Today digest: counts + top-3 New-Today by score, with one-line why ---
+function digestWhy(d){
+  const sig=(d['Fixer Signals']||[])[0];
+  const grade=d['Trend Grade'];
+  const parts=[];
+  if(sig)parts.push(sig);
+  if(grade)parts.push('trend '+grade);
+  return parts.join(' · ')||'no fixer signal yet';
+}
+function buildDigest(){
+  const newToday=DATA.filter(d=>d.Status==='New Today');
+  const drops=DATA.filter(d=>d.Status==='Price Drop');
+  document.getElementById('d-new').textContent=newToday.length;
+  document.getElementById('d-drop').textContent=drops.length;
+  const top=[...newToday].sort((a,b)=>(b.Score||0)-(a.Score||0)).slice(0,3);
+  const host=document.getElementById('d-top');host.innerHTML='';
+  if(!top.length){host.innerHTML='<div class="dempty">No new listings today.</div>';return;}
+  top.forEach(d=>{
+    const el=document.createElement('div');el.className='ditem';
+    el.innerHTML=`<div class="drow"><span class="daddr">${d.Address.split(',')[0]}, ${d.Town}
+      <span class="sbadge" style="background:${scoreColor(d.Score)}">${d.Score}</span></span>
+      <span class="dprice">${fmt(d['List Price'])}</span></div>
+      <div class="dwhy">${digestWhy(d)}</div>`;
+    el.onclick=()=>focusListing(d);
+    host.appendChild(el);
+  });
+}
+
+function dataAsOf(){
+  const dates=DATA.map(d=>d['Last Seen']).filter(Boolean).sort();
+  const max=dates.length?dates[dates.length-1]:null;
+  document.getElementById('asof').textContent=max?`Data as of ${max}`:'';
+}
+
+function boot(){
+  if(!Array.isArray(DATA)||!DATA.length){
+    banner('No listings available yet. <b>listings.json</b> is missing or empty — it is generated each morning by the pipeline.',true);
+    document.getElementById('d-top').innerHTML='<div class="dempty">No data.</div>';
+    document.getElementById('count').textContent='0 listings';
+    return;
+  }
+  if(DATA.some(d=>d.sample===true)){
+    banner('⚠️ Showing <b>seed/sample data</b> — refreshes to the live Notion pipeline after the next morning run.',false);
+  }
+  chipset('f-county','County');chipset('f-status','Status');chipset('f-type','Type');
+  bind('r-score','v-score','minScore',x=>x);
+  bind('r-price','v-price','maxPrice',x=>'$'+Math.round(x/1000)+'k');
+  bind('r-beds','v-beds','minBeds',x=>x?x+'+':'Any');
+  document.getElementById('sort').onchange=e=>{state.sort=e.target.value;render();};
+  dataAsOf();
+  buildDigest();
+  render();
+}
+
+fetch('./listings.json',{cache:'no-store'})
+  .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+  .then(rows=>{DATA=rows;boot();})
+  .catch(err=>{
+    DATA=[];
+    banner('Could not load <b>listings.json</b> ('+err.message+'). The file is published each morning by CI — check back after the next run.',true);
+    document.getElementById('d-top').innerHTML='<div class="dempty">No data.</div>';
+    document.getElementById('count').textContent='0 listings';
+  });
+</script>
+</body>
+</html>
